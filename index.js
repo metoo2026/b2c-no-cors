@@ -54,12 +54,6 @@ const ACCOUNTS = {
   // }
 };
 
-// ── CORS configuration ────────────────────────────────────────
-// Set CORS_ORIGIN to a specific origin (e.g. 'https://example.com')
-// or '*' for any origin. You can also set the CORS_ORIGIN env var
-// in Worker settings to override this at deploy time.
-const DEFAULT_CORS_ORIGIN = '*';
-
 function loadAccounts(env) {
   if (env.B2_ACCOUNTS) {
     try {
@@ -97,36 +91,6 @@ function decodePathPart(part) {
   } catch (e) {
     return part;
   }
-}
-
-// ── CORS helpers ─────────────────────────────────────────────
-
-function corsOrigin(env) {
-  return env.CORS_ORIGIN || DEFAULT_CORS_ORIGIN;
-}
-
-// Headers that allow the browser to read cross-origin responses.
-// Expose Content-Range and Content-Length so JS players can read
-// range info; Accept-Ranges so they know seeking is supported.
-function corsHeaders(env) {
-  const origin = corsOrigin(env);
-  return {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-    'Access-Control-Allow-Headers': 'Range, If-Range, If-None-Match, If-Modified-Since',
-    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges, ETag, Last-Modified',
-    'Access-Control-Max-Age': '86400',
-    'Vary': 'Origin'
-  };
-}
-
-// Apply CORS headers to an existing Headers object (mutates it).
-function applyCorsToHeaders(headers, env) {
-  const cors = corsHeaders(env);
-  for (const [k, v] of Object.entries(cors)) {
-    headers.set(k, v);
-  }
-  return headers;
 }
 
 // ── AWS Signature V4 helpers ──────────────────────────────────
@@ -552,17 +516,6 @@ export default {
     const url = new URL(request.url);
     const method = request.method;
 
-    // ── Handle CORS preflight (OPTIONS) ──────────────────────
-    // Browsers send an OPTIONS preflight before cross-origin
-    // fetch() / XHR / crossorigin video requests. Respond with
-    // the allowed methods and headers so the real request follows.
-    if (method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders(env)
-      });
-    }
-
     const cacheTTL = Math.max(
       0,
       Number.parseInt(env.CACHE_TTL || '86400', 10) || 0
@@ -825,8 +778,6 @@ export default {
         if (!headers.has('Accept-Ranges')) {
           headers.set('Accept-Ranges', 'bytes');
         }
-        // Add CORS headers to cached responses too.
-        applyCorsToHeaders(headers, env);
 
         return new Response(cached.body, {
           status: cached.status,
@@ -880,9 +831,6 @@ export default {
       // Store Accept-Ranges in the cached copy so cache hits
       // advertise byte-range support to media players.
       cacheHeaders.set('Accept-Ranges', 'bytes');
-      // Store CORS headers in the cached copy so cache hits
-      // include them without re-applying.
-      applyCorsToHeaders(cacheHeaders, env);
 
       ctx.waitUntil(
         cache.put(
@@ -909,11 +857,6 @@ export default {
       'CF-Cache-Status',
       canUseCache ? 'MISS' : 'BYPASS'
     );
-
-    // ── Apply CORS headers to all file responses ────────────
-    // This enables cross-origin fetch(), XHR, crossorigin video,
-    // and canvas drawImage access from other origins.
-    applyCorsToHeaders(responseHeaders, env);
 
     // For 304 Not Modified responses, return an empty body with the
     // correct status and headers (B2 sends these in response to
